@@ -100,7 +100,7 @@ func main() {
 	}
 
 	if *hak == "" {
-		color.Yellow("No Hypixel API key has been provided, Hypixel API features will be disabled")
+		color.Yellow("No Hypixel API Key has been provided, Hypixel API features will be disabled")
 	} else {
 		hypixel = newHypixel(*hak)
 
@@ -140,7 +140,6 @@ func handleClient(clientConn net.Conn, forwardAddr string, accessToken string, u
 		log.Fatal(err)
 		return
 	}
-	defer serverConn.Close()
 
 	proxy := Proxy{
 		state:           StateHandshaking,
