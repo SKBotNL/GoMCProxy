@@ -250,6 +250,7 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 			serverPort := make([]byte, 2)
 			binary.BigEndian.PutUint16(serverPort, uint16(serverPortUint16))
 
+			// Server address length + Server address
 			if err := writeVarInt(&packetBody, len(serverAddress)); err != nil {
 				log.Fatal(err)
 			}
@@ -478,6 +479,7 @@ func createChatMessagePacket(text string, chatType ChatType) ([]byte, error) {
 		log.Fatal(err)
 	}
 
+	// JSON data lentgh + JSON data
 	if err := writeVarInt(&packetBody, len(jsonData)); err != nil {
 		return nil, err
 	}
@@ -517,7 +519,7 @@ func (p *Proxy) writeToDst(reconstructedPacket []byte, w io.Writer, clientToServ
 	return nil
 }
 
-type joinRequest struct {
+type JoinRequest struct {
 	AccessToken     string `json:"accessToken"`
 	SelectedProfile string `json:"selectedProfile"` // UUID without dashes
 	ServerID        string `json:"serverId"`
@@ -557,7 +559,7 @@ func (p *Proxy) handleEncryptionRequest(packetReader *bytes.Reader) ([]byte, err
 	digest := minecraftDigest(serverID, p.sharedSecret, encodedServerPubKey)
 
 	uuidWithoutDashes := strings.ReplaceAll(p.uuid, "-", "")
-	reqBody, err := json.Marshal(joinRequest{p.accessToken, uuidWithoutDashes, digest})
+	reqBody, err := json.Marshal(JoinRequest{p.accessToken, uuidWithoutDashes, digest})
 	if err != nil {
 		return nil, err
 	}
