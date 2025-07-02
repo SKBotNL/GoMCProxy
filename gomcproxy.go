@@ -62,6 +62,8 @@ type Proxy struct {
 	forwardAddr     string
 	accessToken     string
 	uuid            string
+	isHypixel       bool
+	bedwarsType     *BedwarsType
 }
 
 var hypixel *Hypixel
@@ -117,7 +119,7 @@ func main() {
 
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
-		log.Fatalf("Failed to listen on %s: %v", listenAddr, err)
+		log.Panicf("Failed to listen on %s: %v", listenAddr, err)
 	}
 	defer ln.Close()
 	log.Printf("Proxy listening on %s, forwarding to %s", listenAddr, forwardAddr)
@@ -125,7 +127,7 @@ func main() {
 	for {
 		clientConn, err := ln.Accept()
 		if err != nil {
-			log.Fatal(err)
+			log.Panic(err)
 			continue
 		}
 		go handleClient(clientConn, forwardAddr, *accessToken, *uuid)
@@ -137,7 +139,7 @@ func handleClient(clientConn net.Conn, forwardAddr string, accessToken string, u
 
 	serverConn, err := net.Dial("tcp", forwardAddr)
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 		return
 	}
 
@@ -155,6 +157,8 @@ func handleClient(clientConn net.Conn, forwardAddr string, accessToken string, u
 		forwardAddr:     forwardAddr,
 		accessToken:     accessToken,
 		uuid:            uuid,
+		isHypixel:       false,
+		bedwarsType:     nil,
 	}
 	go proxy.proxyTraffic(clientConn, serverConn, true)
 	go proxy.proxyTraffic(serverConn, clientConn, false)
@@ -187,7 +191,7 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 		packetReader := bytes.NewReader(packetData)
 		packetID, _, err := readVarInt(packetReader)
 		if err != nil {
-			log.Fatal(err)
+			log.Panic(err)
 		}
 
 		// Handshake
@@ -195,31 +199,31 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 			// Protocol version
 			protocolVersion, _, err := readVarInt(packetReader)
 			if err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 				return
 			}
 			if protocolVersion != 47 {
-				log.Fatal("This proxy only supports protocol version 47 (1.8.*)")
+				log.Panic("This proxy only supports protocol version 47 (1.8.*)")
 			}
 
 			// Server address
 			_, err = readPrefixedBytes(packetReader)
 			if err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 				return
 			}
 
 			// Server port
 			_, err = io.CopyN(io.Discard, packetReader, 2)
 			if err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 				return
 			}
 
 			// Intent
 			intent, _, err := readVarInt(packetReader)
 			if err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 				return
 			}
 
@@ -228,30 +232,30 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 
 			// Packet ID
 			if err := writeVarInt(&packetBody, 0x00); err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 			}
 
 			// Protocol version
 			if err := writeVarInt(&packetBody, protocolVersion); err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 			}
 
 			forwardAddrSplit := strings.Split(p.forwardAddr, ":")
 			if len(forwardAddrSplit) != 2 {
-				log.Fatal(errors.New("Invalid forward addr"))
+				log.Panic(errors.New("Invalid forward addr"))
 			}
 			serverAddress := forwardAddrSplit[0]
 			serverPortString := forwardAddrSplit[1]
 			serverPortUint16, err := strconv.ParseUint(serverPortString, 10, 16)
 			if err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 			}
 			serverPort := make([]byte, 2)
 			binary.BigEndian.PutUint16(serverPort, uint16(serverPortUint16))
 
 			// Server address length + Server address
 			if err := writeVarInt(&packetBody, len(serverAddress)); err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 			}
 			packetBody.Write([]byte(serverAddress))
 
@@ -260,12 +264,12 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 
 			// Intent
 			if err := writeVarInt(&packetBody, intent); err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 			}
 
 			// Turn into a full packet
 			if err := writeVarInt(&reconstructedPacket, packetBody.Len()); err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 			}
 			reconstructedPacket.Write(packetBody.Bytes())
 
@@ -284,11 +288,12 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 				p.state = StateLogin
 				log.Println("Switched to the Login state")
 			default:
-				log.Fatal("Unhandled intent")
+				log.Panic("Unhandled intent")
 				return
 			}
 			continue
 		}
+
 		// Login Success
 		if p.state == StateLogin && packetID == 2 && !clientToServer {
 			p.state = StatePlay
@@ -299,7 +304,7 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 		if p.state == StateLogin && packetID == 1 && !clientToServer {
 			encryptionResponse, err := p.handleEncryptionRequest(packetReader)
 			if err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 			}
 
 			// Respond with an encryption response of our own, this way we never tell the client that encryption is enabled.
@@ -314,7 +319,7 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 			// Initialise encryption
 			block, err := aes.NewCipher(p.sharedSecret)
 			if err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 			}
 
 			p.serverDecrypt = newCFB8Decrypter(block, p.sharedSecret)
@@ -325,56 +330,78 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 			log.Println("Enabled encryption")
 			continue
 		}
+
 		// Plugin message
 		if p.state == StatePlay && packetID == 0x3F && !clientToServer {
 			channel, err := readPrefixedBytes(packetReader)
 			if err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 			}
 			data, err := readPrefixedBytes(packetReader)
 			if err != nil {
-				if !errors.Is(err, io.ErrUnexpectedEOF) {
-					log.Fatal(err)
+				if !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+					log.Panic(err)
 				}
 			}
 			if string(channel) == "MC|Brand" && strings.Contains(string(data), "Hypixel") {
+				p.isHypixel = true
 				continue
 			}
 		}
-		// Chat message
-		if p.state == StatePlay && packetID == 0x01 && clientToServer {
+
+		// Serverbound chat message
+		if p.state == StatePlay && packetID == 0x01 && clientToServer && p.isHypixel {
 			messageBytes, err := readPrefixedBytes(packetReader)
 			if err != nil {
-				log.Fatal(err)
+				log.Panic(err)
 			}
 			message := string(messageBytes)
 			if strings.HasPrefix(message, "/sc") {
 				if hypixel == nil {
 					err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cHypixel API features have been disabled", ChatTypeChat, src)
 					if err != nil {
-						log.Fatal(err)
+						log.Panic(err)
 					}
 					continue
 				}
 				messageSplit := strings.Split(message, " ")
-				if len(messageSplit) != 3 {
+				if len(messageSplit) != 2 && len(messageSplit) != 3 {
 					err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid amount of arguments", ChatTypeChat, src)
 					if err != nil {
-						log.Fatal(err)
+						log.Panic(err)
 					}
 					continue
 				}
-				bedwarsType, err := GetBedwarsType(strings.ToLower(messageSplit[1]))
-				if err != nil {
-					err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid bedwars type", ChatTypeChat, src)
-					if err != nil {
-						if p.errorChecker(err) {
-							return
+
+				var bedwarsType BedwarsType
+				var playerNameIndex int
+				if len(messageSplit) == 3 {
+					var ok bool
+					bedwarsType, ok = GetBedwarsType(strings.ToLower(messageSplit[1]))
+					if !ok {
+						err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid bedwars type", ChatTypeChat, src)
+						if err != nil {
+							if p.errorChecker(err) {
+								return
+							}
 						}
+						continue
 					}
-					continue
+					playerNameIndex = 2
+				} else {
+					if p.bedwarsType != nil {
+						bedwarsType = *p.bedwarsType
+					} else {
+						err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid amount of arguments", ChatTypeChat, src)
+						if err != nil {
+							log.Panic(err)
+						}
+						continue
+					}
+					playerNameIndex = 1
 				}
-				apiProfile, err := getPlayerUuid(messageSplit[2])
+
+				apiProfile, err := getPlayerProfile(messageSplit[playerNameIndex])
 				if err != nil {
 					err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid player", ChatTypeChat, src)
 					if err != nil {
@@ -414,9 +441,75 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 			}
 		}
 
+		// Clientbound server message
+		if p.state == StatePlay && packetID == 0x02 && !clientToServer && p.isHypixel {
+			messageBytes, err := readPrefixedBytes(packetReader)
+			if err != nil {
+				log.Panic(err)
+			}
+			message := string(messageBytes)
+
+			if strings.HasPrefix(message, "{\"text\":\"{\\\"server\\\"") {
+				chatMessage := ChatMessageData{}
+				err = json.Unmarshal([]byte(message), &chatMessage)
+				if err != nil {
+					log.Panic(err)
+				}
+
+				locraw := Locraw{}
+				err = json.Unmarshal([]byte(chatMessage.Text), &locraw)
+				if err != nil {
+					log.Panic(err)
+				}
+
+				if locraw.GameType == "BEDWARS" && locraw.Mode != "" {
+					bedwarsType, ok := GetBedwarsType(locraw.Mode)
+					if !ok {
+						log.Panic(ok)
+					}
+					p.bedwarsType = &bedwarsType
+				} else {
+					p.bedwarsType = nil
+				}
+				continue
+			}
+		}
+
+		// Respawn
+		if p.state == StatePlay && packetID == 0x07 && !clientToServer && p.isHypixel {
+			dimension := make([]byte, 4)
+			_, err := io.ReadFull(packetReader, dimension)
+			if err != nil {
+				log.Panic(err)
+			}
+
+			if int32(binary.BigEndian.Uint32(dimension)) == -1 {
+				var packetBody bytes.Buffer
+
+				// Packet ID
+				if err := writeVarInt(&packetBody, 0x01); err != nil {
+					log.Panic(err)
+				}
+
+				locraw := "/locraw"
+				// Name length + Name
+				if err := writeVarInt(&packetBody, len(locraw)); err != nil {
+					log.Panic(err)
+				}
+				packetBody.Write([]byte(locraw))
+
+				reconstructedPacket, err := p.reconstructPacket(packetBody.Bytes())
+				if err != nil {
+					log.Panic(err)
+				}
+
+				p.writeToSrc(reconstructedPacket, src, clientToServer)
+			}
+		}
+
 		reconstructedPacket, err := p.reconstructPacket(packetData)
 		if err != nil {
-			log.Fatal(err)
+			log.Panic(err)
 		}
 
 		err = p.writeToDst(reconstructedPacket, dst, clientToServer)
@@ -430,7 +523,7 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 		if p.state == StateLogin && packetID == 3 && !clientToServer {
 			localThreshold, _, err := readVarInt(packetReader)
 			if err != nil {
-				log.Fatal("Read error:", err)
+				log.Panic("Read error:", err)
 			}
 			p.threshold = localThreshold
 		}
@@ -448,7 +541,7 @@ func (p *Proxy) errorChecker(err error) bool {
 		p.shouldExit = true
 		return true
 	}
-	log.Fatal(err)
+	log.Panic(err)
 	return false
 }
 
@@ -472,13 +565,13 @@ func createChatMessagePacket(text string, chatType ChatType) ([]byte, error) {
 	case ChatTypeChat:
 		jsonData, err = json.Marshal(ChatMessageData{[]string{text}, ""})
 	default:
-		log.Fatal(errors.New("Not implemented"))
+		log.Panic(errors.New("Not implemented"))
 	}
 	if err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	}
 
-	// JSON data lentgh + JSON data
+	// JSON data length + JSON data
 	if err := writeVarInt(&packetBody, len(jsonData)); err != nil {
 		return nil, err
 	}
@@ -510,6 +603,16 @@ func (p *Proxy) writeChatMessageToClient(text string, chatType ChatType, w io.Wr
 
 func (p *Proxy) writeToDst(reconstructedPacket []byte, w io.Writer, clientToServer bool) error {
 	if p.serverWriter != nil && clientToServer {
+		w = p.serverWriter
+	}
+	if _, err := w.Write(reconstructedPacket); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *Proxy) writeToSrc(reconstructedPacket []byte, w io.Writer, clientToServer bool) error {
+	if p.serverWriter != nil && !clientToServer {
 		w = p.serverWriter
 	}
 	if _, err := w.Write(reconstructedPacket); err != nil {
@@ -595,7 +698,7 @@ func (p *Proxy) createEncryptionResponse(verifyToken []byte) ([]byte, error) {
 	}
 	packetBody.Write(encryptedSharedSecretForServer)
 
-	// Verify Token Length + Verify Token (the one from server encrypted with server's pub key)
+	// Verify Token Length + Verify Token (encrypted with server's pub key)
 	if err := writeVarInt(&packetBody, len(encryptedVerifyTokenForServer)); err != nil {
 		return nil, err
 	}

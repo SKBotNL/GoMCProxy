@@ -13,6 +13,12 @@ import (
 	"net/url"
 )
 
+type Locraw struct {
+	Server   string `json:"server"`
+	GameType string `json:"gametype"`
+	Mode     string `json:"mode"`
+}
+
 type Hypixel struct {
 	apiKey string
 }
@@ -113,6 +119,19 @@ const (
 	BedwarsType4v4     BedwarsType = "4v4"
 )
 
+var bedwarsTypeStrings = map[string]BedwarsType{
+	"solo":               BedwarsTypeSolo,
+	"doubles":            BedwarsTypeDoubles,
+	"3v3v3v3":            BedwarsType3v3v3v3,
+	"4v4v4v4":            BedwarsType4v4v4v4,
+	"4v4":                BedwarsType4v4,
+	"BEDWARS_EIGHT_ONE":  BedwarsTypeSolo,
+	"BEDWARS_EIGHT_TWO":  BedwarsTypeDoubles,
+	"BEDWARS_FOUR_THREE": BedwarsType3v3v3v3,
+	"BEDWARS_FOUR_FOUR":  BedwarsType4v4v4v4,
+	"BEDWARS_TWO_FOUR":   BedwarsType4v4,
+}
+
 type BedwarsStats struct {
 	Stars       int
 	Kills       int
@@ -128,13 +147,9 @@ type BedwarsStats struct {
 	BedsBroken  int
 }
 
-func GetBedwarsType(s string) (BedwarsType, error) {
-	switch BedwarsType(s) {
-	case BedwarsTypeSolo, BedwarsTypeDoubles, BedwarsType3v3v3v3, BedwarsType4v4v4v4, BedwarsType4v4:
-		return BedwarsType(s), nil
-	default:
-		return "", errors.New("Invalid BedwarsType")
-	}
+func GetBedwarsType(s string) (BedwarsType, bool) {
+	bedwarsType, ok := bedwarsTypeStrings[s]
+	return bedwarsType, ok
 }
 
 func (h *Hypixel) getPlayerStats(uuid string) (*PlayerStats, error) {

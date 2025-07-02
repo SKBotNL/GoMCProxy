@@ -17,10 +17,20 @@ type APIProfile struct {
 	Name string `json:"name"`
 }
 
-func getPlayerUuid(name string) (*APIProfile, error) {
+var InvalidPlayer = errors.New("Invalid player")
+
+var apiProfileCache = make(map[string]*APIProfile)
+
+func getPlayerProfile(name string) (*APIProfile, error) {
+	if apiProfile, ok := apiProfileCache[name]; ok {
+		if apiProfile != nil {
+			return apiProfile, nil
+		}
+	}
 	resp, err := http.Get("https://api.mojang.com/users/profiles/minecraft/" + name)
 	if err != nil || resp.StatusCode != 200 {
-		return nil, errors.New("Invalid player")
+		apiProfileCache[name] = nil
+		return nil, InvalidPlayer
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -33,6 +43,8 @@ func getPlayerUuid(name string) (*APIProfile, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	apiProfileCache[name] = &apiProfile
 
 	return &apiProfile, nil
 }
