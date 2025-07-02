@@ -464,10 +464,9 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 
 				if locraw.GameType == "BEDWARS" && locraw.Mode != "" {
 					bedwarsType, ok := GetBedwarsType(locraw.Mode)
-					if !ok {
-						log.Panic(ok)
+					if ok {
+						p.bedwarsType = &bedwarsType
 					}
-					p.bedwarsType = &bedwarsType
 				} else {
 					p.bedwarsType = nil
 				}
