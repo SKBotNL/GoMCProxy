@@ -297,7 +297,7 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 		// Login Success
 		if p.state == StateLogin && packetID == 2 && !clientToServer {
 			p.state = StatePlay
-			log.Println("Login Success, switched to the Play State")
+			log.Println("Login success, switched to the Play state")
 		}
 
 		// Encryption Request
@@ -459,7 +459,7 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 				locraw := Locraw{}
 				err = json.Unmarshal([]byte(chatMessage.Text), &locraw)
 				if err != nil {
-					log.Panic(err)
+					continue
 				}
 
 				if locraw.GameType == "BEDWARS" && locraw.Mode != "" {
