@@ -28,6 +28,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/fatih/color"
 )
@@ -68,6 +69,10 @@ type Proxy struct {
 
 var hypixel *Hypixel
 
+var colorCodeRegex = regexp.MustCompile(`§([0-9a-fk-or*])`)
+var purchasedRegex = regexp.MustCompile(`purchased ([a-zA-Z ]*)$`)
+var trapSetOffRegex = regexp.MustCompile(`^[a-zA-Z ]* was set off!$`)
+
 func main() {
 	listenHost := flag.String("listenhost", "127.0.0.1", "The host to listen on")
 	listenPort := flag.String("listenport", "25565", "The port to listen on")
@@ -80,6 +85,8 @@ func main() {
 	uuid := flag.String("uuid", "", "Your Minecraft account's UUID")
 
 	hak := flag.String("hypixel-api-key", "", "Hypixel API Key")
+
+	overlay := flag.Bool("overlay", false, "Show the overlay")
 
 	flag.Parse()
 
@@ -124,13 +131,21 @@ func main() {
 	defer ln.Close()
 	log.Printf("Proxy listening on %s, forwarding to %s", listenAddr, forwardAddr)
 
-	for {
-		clientConn, err := ln.Accept()
-		if err != nil {
-			log.Panic(err)
-			continue
+	go func() {
+		for {
+			clientConn, err := ln.Accept()
+			if err != nil {
+				log.Panic(err)
+				continue
+			}
+			go handleClient(clientConn, forwardAddr, *accessToken, *uuid)
 		}
-		go handleClient(clientConn, forwardAddr, *accessToken, *uuid)
+	}()
+
+	if *overlay {
+		runOverlay()
+	} else {
+		select {}
 	}
 }
 
@@ -222,53 +237,12 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 				log.Panic(err)
 			}
 
-			var reconstructedPacket bytes.Buffer
-			var packetBody bytes.Buffer
-
-			// Packet ID
-			if err := writeVarInt(&packetBody, 0x00); err != nil {
-				log.Panic(err)
-			}
-
-			// Protocol version
-			if err := writeVarInt(&packetBody, protocolVersion); err != nil {
-				log.Panic(err)
-			}
-
-			forwardAddrSplit := strings.Split(p.forwardAddr, ":")
-			if len(forwardAddrSplit) != 2 {
-				log.Panic(errors.New("Invalid forward addr"))
-			}
-			serverAddress := forwardAddrSplit[0]
-			serverPortString := forwardAddrSplit[1]
-			serverPortUint16, err := strconv.ParseUint(serverPortString, 10, 16)
+			handshakePacket, err := p.createHandshakePacket(State(intent))
 			if err != nil {
 				log.Panic(err)
 			}
-			serverPort := make([]byte, 2)
-			binary.BigEndian.PutUint16(serverPort, uint16(serverPortUint16))
 
-			// Server address length + Server address
-			if err := writeVarInt(&packetBody, len(serverAddress)); err != nil {
-				log.Panic(err)
-			}
-			packetBody.Write([]byte(serverAddress))
-
-			// Server Port
-			packetBody.Write(serverPort)
-
-			// Intent
-			if err := writeVarInt(&packetBody, intent); err != nil {
-				log.Panic(err)
-			}
-
-			// Turn into a full packet
-			if err := writeVarInt(&reconstructedPacket, packetBody.Len()); err != nil {
-				log.Panic(err)
-			}
-			reconstructedPacket.Write(packetBody.Bytes())
-
-			_, err = dst.Write(reconstructedPacket.Bytes())
+			_, err = dst.Write(handshakePacket)
 			if err != nil {
 				if p.errorChecker(err) {
 					return
@@ -345,98 +319,164 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 		}
 
 		// Serverbound chat message
-		if p.state == StatePlay && packetID == 0x01 && clientToServer && p.isHypixel {
+		if p.state == StatePlay && packetID == 0x01 && clientToServer {
 			messageBytes, err := readPrefixedBytes(packetReader)
 			if err != nil {
 				log.Panic(err)
 			}
 			message := string(messageBytes)
-			if strings.HasPrefix(message, "/sc") {
-				if hypixel == nil {
-					err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cHypixel API features have been disabled", ChatTypeChat, src)
+			if strings.TrimSpace(message) == "/ping" {
+				go func() {
+					start := time.Now()
+					conn, err := net.DialTimeout("tcp", p.forwardAddr, 10*time.Second)
 					if err != nil {
-						log.Panic(err)
+						_ = p.writeChatMessageToClient("§bGoMCProxy: §cAn error occurred while trying to ping", ChatTypeChat, src)
+						return
 					}
-					continue
-				}
-				messageSplit := strings.Split(message, " ")
-				if len(messageSplit) != 2 && len(messageSplit) != 3 {
-					err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid amount of arguments", ChatTypeChat, src)
-					if err != nil {
-						log.Panic(err)
-					}
-					continue
-				}
+					defer conn.Close()
 
-				var bedwarsType BedwarsType
-				var playerNameIndex int
-				if len(messageSplit) == 3 {
-					var ok bool
-					bedwarsType, ok = GetBedwarsType(strings.ToLower(messageSplit[1]))
-					if !ok {
-						err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid bedwars type", ChatTypeChat, src)
+					var pingReader io.Reader = conn
+
+					handshakePacket, err := p.createHandshakePacket(StateStatus)
+					if err != nil {
+						_ = p.writeChatMessageToClient("§bGoMCProxy: §cAn error occurred while trying to ping", ChatTypeChat, src)
+						return
+					}
+
+					_, err = conn.Write(handshakePacket)
+					if err != nil {
+						log.Panic(err)
+					}
+
+					// Ping Request (status)
+					var requestPacket bytes.Buffer
+					if err := writeVarInt(&requestPacket, 1); err != nil {
+						log.Panic(err)
+					}
+					if err := writeVarInt(&requestPacket, 0x00); err != nil {
+						log.Panic(err)
+					}
+					_, err = conn.Write(requestPacket.Bytes())
+					if err != nil {
+						log.Panic(err)
+					}
+
+					_, _, err = p.readPacket(pingReader)
+					if err != nil {
+						_ = p.writeChatMessageToClient("§bGoMCProxy: §cAn error occurred while trying to ping", ChatTypeChat, src)
+						return
+					}
+
+					elapsed := time.Since(start)
+					ping := elapsed.Milliseconds()
+					var colorCode string
+					if ping <= 20 {
+						colorCode = "§2"
+					} else if ping <= 50 {
+						colorCode = "§a"
+					} else if ping <= 100 {
+						colorCode = "§e"
+					} else if ping <= 150 {
+						colorCode = "§6"
+					} else {
+						colorCode = "§c"
+					}
+					err = p.writeChatMessageToClient(fmt.Sprintf("§bGoMCProxy: §rPong! %s%d ms", colorCode, elapsed.Milliseconds()), ChatTypeChat, src)
+					if err != nil {
+						if p.errorChecker(err) {
+							return
+						}
+					}
+				}()
+				continue
+			} else if strings.HasPrefix(message, "/sc") && p.isHypixel {
+				go func() {
+					if hypixel == nil {
+						err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cHypixel API features have been disabled", ChatTypeChat, src)
+						if err != nil {
+							log.Panic(err)
+						}
+						return
+					}
+					messageSplit := strings.Split(message, " ")
+					if len(messageSplit) != 2 && len(messageSplit) != 3 {
+						err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid amount of arguments", ChatTypeChat, src)
+						if err != nil {
+							log.Panic(err)
+						}
+						return
+					}
+
+					var bedwarsType BedwarsType
+					var playerNameIndex int
+					if len(messageSplit) == 3 {
+						var ok bool
+						bedwarsType, ok = GetBedwarsType(strings.ToLower(messageSplit[1]))
+						if !ok {
+							err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid bedwars type", ChatTypeChat, src)
+							if err != nil {
+								if p.errorChecker(err) {
+									return
+								}
+							}
+							return
+						}
+						playerNameIndex = 2
+					} else {
+						if p.bedwarsType != nil {
+							bedwarsType = *p.bedwarsType
+						} else {
+							err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid amount of arguments", ChatTypeChat, src)
+							if err != nil {
+								log.Panic(err)
+							}
+							return
+						}
+						playerNameIndex = 1
+					}
+
+					apiProfile, err := getPlayerProfile(messageSplit[playerNameIndex])
+					if err != nil {
+						err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid player", ChatTypeChat, src)
 						if err != nil {
 							if p.errorChecker(err) {
 								return
 							}
 						}
-						continue
-					}
-					playerNameIndex = 2
-				} else {
-					if p.bedwarsType != nil {
-						bedwarsType = *p.bedwarsType
-					} else {
-						err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid amount of arguments", ChatTypeChat, src)
-						if err != nil {
-							log.Panic(err)
-						}
-						continue
-					}
-					playerNameIndex = 1
-				}
-
-				apiProfile, err := getPlayerProfile(messageSplit[playerNameIndex])
-				if err != nil {
-					err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cInvalid player", ChatTypeChat, src)
-					if err != nil {
-						if p.errorChecker(err) {
-							return
-						}
-					}
-					continue
-				}
-				playerName := apiProfile.Name
-				playerUuid := apiProfile.Id
-
-				bedwarsStats, err := hypixel.getBedwarsStats(playerUuid, bedwarsType)
-				if err != nil {
-					err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cAn error occurred while fetching the bedwars stats", ChatTypeChat, src)
-					if err != nil {
-						if p.errorChecker(err) {
-							return
-						}
-					}
-					continue
-				}
-
-				statsMessage := fmt.Sprintf("§bGoMCProxy StatCheck:\n"+
-					"§l§e%s §6Bedwars Stats for §b§l[%d✫] %s§r\n"+
-					"§aKills: §f%d, §cDeaths: §f%d, §aK§f/§cD: §f%.2f\n"+
-					"§5Final §2Kills: §f%d, §5Final §4Deaths: §f%d, §5Final §2K§f/§4D: §f%.2f\n"+
-					"§aWins: §f%d, §cLosses: §f%d, §aW§f/§cL: §f%.2f\n"+
-					"§bWinstreak: §f%d, §3Beds Broken: §f%d",
-					capitaliseFirst(string(bedwarsType)), bedwarsStats.Stars, playerName, bedwarsStats.Kills, bedwarsStats.Deaths, bedwarsStats.KD,
-					bedwarsStats.FinalKills, bedwarsStats.FinalDeaths, bedwarsStats.FinalKD,
-					bedwarsStats.Wins, bedwarsStats.Losses, bedwarsStats.WL,
-					bedwarsStats.Winstreak, bedwarsStats.BedsBroken)
-
-				err = p.writeChatMessageToClient(statsMessage, ChatTypeChat, src)
-				if err != nil {
-					if p.errorChecker(err) {
 						return
 					}
-				}
+					playerName := apiProfile.Name
+					playerUuid := apiProfile.Id
+
+					bedwarsStats, err := hypixel.getBedwarsStats(playerUuid, bedwarsType)
+					if err != nil {
+						err = p.writeChatMessageToClient("§bGoMCProxy StatCheck: §cAn error occurred while fetching the bedwars stats", ChatTypeChat, src)
+						if err != nil {
+							if p.errorChecker(err) {
+								return
+							}
+						}
+						return
+					}
+
+					statsMessage := fmt.Sprintf("§bGoMCProxy StatCheck:\n"+
+						"§l§e%s §6Bedwars Stats for §b§l[%d✫] %s§r\n"+
+						"§aKills: §f%d, §cDeaths: §f%d, §aK§f/§cD: §f%.2f\n"+
+						"§5Final §2Kills: §f%d, §5Final §4Deaths: §f%d, §5Final §2K§f/§4D: §f%.2f\n"+
+						"§aWins: §f%d, §cLosses: §f%d, §aW§f/§cL: §f%.2f\n"+
+						"§bWinstreak: §f%d, §3Beds Broken: §f%d",
+						capitaliseFirst(string(bedwarsType)), bedwarsStats.Stars, playerName, bedwarsStats.Kills, bedwarsStats.Deaths, bedwarsStats.KD,
+						bedwarsStats.FinalKills, bedwarsStats.FinalDeaths, bedwarsStats.FinalKD,
+						bedwarsStats.Wins, bedwarsStats.Losses, bedwarsStats.WL,
+						bedwarsStats.Winstreak, bedwarsStats.BedsBroken)
+
+					err = p.writeChatMessageToClient(statsMessage, ChatTypeChat, src)
+					if err != nil {
+						if p.errorChecker(err) {
+							return
+						}
+					}
+				}()
 				continue
 			}
 		}
@@ -449,33 +489,75 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 			}
 			message := string(messageBytes)
 
-			if strings.HasPrefix(message, "{\"text\":\"{\\\"server\\\"") {
-				chatMessage := ChatMessageData{}
-				err = json.Unmarshal([]byte(message), &chatMessage)
-				if err != nil {
-					log.Panic(err)
-				}
-
-				locraw := Locraw{}
-				err = json.Unmarshal([]byte(chatMessage.Text), &locraw)
-				if err != nil {
-					continue
-				}
-
-				if locraw.GameType == "BEDWARS" && locraw.Mode != "" {
-					bedwarsType, ok := GetBedwarsType(locraw.Mode)
-					if ok {
-						p.bedwarsType = &bedwarsType
+			chatMessage := ChatMessageData{}
+			err = json.Unmarshal([]byte(message), &chatMessage)
+			if err == nil {
+				fmt.Println(chatMessage.Text)
+				if strings.HasPrefix(chatMessage.Text, "{\"server\"") {
+					chatMessage := ChatMessageData{}
+					err = json.Unmarshal([]byte(message), &chatMessage)
+					if err != nil {
+						log.Panic(err)
 					}
+
+					locraw := Locraw{}
+					err = json.Unmarshal([]byte(chatMessage.Text), &locraw)
+					if err != nil {
+						continue
+					}
+
+					if locraw.GameType == "BEDWARS" && locraw.Mode != "" {
+						bedwarsType, ok := GetBedwarsType(locraw.Mode)
+						if ok {
+							p.bedwarsType = &bedwarsType
+						}
+					} else {
+						p.bedwarsType = nil
+					}
+					continue
 				} else {
-					p.bedwarsType = nil
+					go func() {
+						textSlice := make([]string, 0, len(chatMessage.Extra))
+						for _, e := range chatMessage.Extra {
+							textSlice = append(textSlice, e.Text)
+						}
+						messageText := strings.Join(textSlice, "")
+						messageText = colorCodeRegex.ReplaceAllString(messageText, "")
+
+						match := purchasedRegex.FindStringSubmatch(messageText)
+						if match != nil {
+							upgrade := match[1]
+							if strings.HasSuffix(upgrade, "Trap") {
+								trapsMutex.Lock()
+								traps = append(traps, upgrade)
+								trapsMutex.Unlock()
+							} else {
+								key, text, nextPrice := getUpgradeInformation(upgrade, BedwarsTypeSolo)
+								if key != "" {
+									upgradesMutex.Lock()
+									upgrades[key] = upgradeData{text, nextPrice}
+									upgradesMutex.Unlock()
+								}
+							}
+						} else {
+							if trapSetOffRegex.MatchString(messageText) {
+								trapsMutex.Lock()
+								if len(traps) > 0 {
+									traps = traps[1:]
+								}
+								trapsMutex.Unlock()
+							}
+						}
+					}()
 				}
-				continue
 			}
 		}
 
 		// Respawn
 		if p.state == StatePlay && packetID == 0x07 && !clientToServer && p.isHypixel {
+			clear(upgrades)
+			clear(traps)
+
 			dimension := make([]byte, 4)
 			_, err := io.ReadFull(packetReader, dimension)
 			if err != nil {
@@ -539,9 +621,63 @@ func (p *Proxy) errorChecker(err error) bool {
 	return false
 }
 
+func (p *Proxy) createHandshakePacket(intent State) ([]byte, error) {
+	// Handshake
+	var reconstructedPacket bytes.Buffer
+	var packetBody bytes.Buffer
+
+	// Packet ID
+	if err := writeVarInt(&packetBody, 0x00); err != nil {
+		return nil, err
+	}
+
+	// Protocol version
+	if err := writeVarInt(&packetBody, 47); err != nil {
+		return nil, err
+	}
+
+	forwardAddrSplit := strings.Split(p.forwardAddr, ":")
+	if len(forwardAddrSplit) != 2 {
+		log.Panic(errors.New("Invalid forward addr"))
+	}
+	serverAddress := forwardAddrSplit[0]
+	serverPortString := forwardAddrSplit[1]
+	serverPortUint16, err := strconv.ParseUint(serverPortString, 10, 16)
+	if err != nil {
+		return nil, err
+	}
+	serverPort := make([]byte, 2)
+	binary.BigEndian.PutUint16(serverPort, uint16(serverPortUint16))
+
+	// Server address length + Server address
+	if err := writeVarInt(&packetBody, len(serverAddress)); err != nil {
+		return nil, err
+	}
+	packetBody.Write([]byte(serverAddress))
+
+	// Server Port
+	packetBody.Write(serverPort)
+
+	// Intent
+	if err := writeVarInt(&packetBody, int(intent)); err != nil {
+		return nil, err
+	}
+
+	// Turn into a full packet
+	if err := writeVarInt(&reconstructedPacket, packetBody.Len()); err != nil {
+		return nil, err
+	}
+	reconstructedPacket.Write(packetBody.Bytes())
+	return reconstructedPacket.Bytes(), nil
+}
+
 type ChatMessageData struct {
-	Extra []string `json:"extra"`
-	Text  string   `json:"text"`
+	Extra []ChatMessageExtra `json:"extra"`
+	Text  string             `json:"text"`
+}
+
+type ChatMessageExtra struct {
+	Text string `json:"text"`
 }
 
 // Creates a **Clientbound** chat message packet
@@ -557,7 +693,7 @@ func createChatMessagePacket(text string, chatType ChatType) ([]byte, error) {
 	var err error
 	switch chatType {
 	case ChatTypeChat:
-		jsonData, err = json.Marshal(ChatMessageData{[]string{text}, ""})
+		jsonData, err = json.Marshal(ChatMessageData{[]ChatMessageExtra{{text}}, ""})
 	default:
 		log.Panic(errors.New("Not implemented"))
 	}
