@@ -425,11 +425,16 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 					continue
 				}
 
-				statsMessage := "§6§l" + capitaliseFirst(string(bedwarsType)) + " Bedwars Stats for §b§l[" + fmt.Sprint(bedwarsStats.Stars) + "✫] " + playerName + "§r\n" +
-					"§aKills: §f" + fmt.Sprint(bedwarsStats.Kills) + "           §cDeaths: §f" + fmt.Sprint(bedwarsStats.Deaths) + "            §aK§f/§cD: §f" + fmt.Sprint(bedwarsStats.KD) + "\n" +
-					"§5Final §2Kills: §f" + fmt.Sprint(bedwarsStats.FinalKills) + "   §5Final §4Deaths: §f" + fmt.Sprint(bedwarsStats.FinalDeaths) + "   §5Final §2K§f/§4D: §f" + fmt.Sprint(bedwarsStats.FinalKD) + "\n" +
-					"§aWins: §f" + fmt.Sprint(bedwarsStats.Wins) + "         §cLosses: §f" + fmt.Sprint(bedwarsStats.Losses) + "                §aW§f/§cL: §f" + fmt.Sprint(bedwarsStats.WL) + "\n" +
-					"§bWinstreak: §f" + fmt.Sprint(bedwarsStats.Winstreak) + "   §3Beds Broken: §f" + fmt.Sprint(bedwarsStats.BedsBroken)
+				statsMessage := fmt.Sprintf("§bGoMCProxy StatCheck:\n"+
+					"§l§e%s §6Bedwars Stats for §b§l[%d✫] %s§r\n"+
+					"§aKills: §f%d, §cDeaths: §f%d, §aK§f/§cD: §f%.2f\n"+
+					"§5Final §2Kills: §f%d, §5Final §4Deaths: §f%d, §5Final §2K§f/§4D: §f%.2f\n"+
+					"§aWins: §f%d, §cLosses: §f%d, §aW§f/§cL: §f%.2f\n"+
+					"§bWinstreak: §f%d, §3Beds Broken: §f%d",
+					capitaliseFirst(string(bedwarsType)), bedwarsStats.Stars, playerName, bedwarsStats.Kills, bedwarsStats.Deaths, bedwarsStats.KD,
+					bedwarsStats.FinalKills, bedwarsStats.FinalDeaths, bedwarsStats.FinalKD,
+					bedwarsStats.Wins, bedwarsStats.Losses, bedwarsStats.WL,
+					bedwarsStats.Winstreak, bedwarsStats.BedsBroken)
 
 				err = p.writeChatMessageToClient(statsMessage, ChatTypeChat, src)
 				if err != nil {

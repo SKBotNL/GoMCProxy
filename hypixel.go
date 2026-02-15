@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math"
 	"net/http"
 	"net/url"
 )
@@ -194,12 +193,9 @@ func (h *Hypixel) getBedwarsStats(uuid string, bedwarsType BedwarsType) (*Bedwar
 	switch bedwarsType {
 	case BedwarsTypeSolo:
 		statsBedwars := playerStats.Player.Stats.Bedwars
-		KDUnrounded := float64(statsBedwars.EightOneKillsBedwars) / float64(statsBedwars.EightOneDeathsBedwars)
-		KD := float32(math.Round(KDUnrounded*100) / 100)
-		FinalKDUnrounded := float64(statsBedwars.EightOneFinalKillsBedwars) / float64(statsBedwars.EightOneFinalDeathsBedwars)
-		FinalKD := float32(math.Round(FinalKDUnrounded*100) / 100)
-		WLUnrounded := float64(statsBedwars.EightOneWinsBedwars) / float64(statsBedwars.EightOneLossesBedwars)
-		WL := float32(math.Round(WLUnrounded*100) / 100)
+		KD := float32(statsBedwars.EightOneKillsBedwars) / float32(statsBedwars.EightOneDeathsBedwars)
+		FinalKD := float32(statsBedwars.EightOneFinalKillsBedwars) / float32(statsBedwars.EightOneFinalDeathsBedwars)
+		WL := float32(statsBedwars.EightOneWinsBedwars) / float32(statsBedwars.EightOneLossesBedwars)
 		return &BedwarsStats{
 			playerStats.Player.Achievements.BedwarsLevel,
 			statsBedwars.EightOneKillsBedwars,
@@ -216,12 +212,9 @@ func (h *Hypixel) getBedwarsStats(uuid string, bedwarsType BedwarsType) (*Bedwar
 		}, nil
 	case BedwarsTypeDoubles:
 		statsBedwars := playerStats.Player.Stats.Bedwars
-		KDUnrounded := float64(statsBedwars.EightTwoKillsBedwars) / float64(statsBedwars.EightTwoDeathsBedwars)
-		KD := float32(math.Round(KDUnrounded*100) / 100)
-		FinalKDUnrounded := float64(statsBedwars.EightTwoFinalKillsBedwars) / float64(statsBedwars.EightTwoFinalDeathsBedwars)
-		FinalKD := float32(math.Round(FinalKDUnrounded*100) / 100)
-		WLUnrounded := float64(statsBedwars.EightTwoWinsBedwars) / float64(statsBedwars.EightTwoLossesBedwars)
-		WL := float32(math.Round(WLUnrounded*100) / 100)
+		KD := float32(statsBedwars.EightTwoKillsBedwars) / float32(statsBedwars.EightTwoDeathsBedwars)
+		FinalKD := float32(statsBedwars.EightTwoFinalKillsBedwars) / float32(statsBedwars.EightTwoFinalDeathsBedwars)
+		WL := float32(statsBedwars.EightTwoWinsBedwars) / float32(statsBedwars.EightTwoLossesBedwars)
 		return &BedwarsStats{
 			playerStats.Player.Achievements.BedwarsLevel,
 			statsBedwars.EightTwoKillsBedwars,
@@ -238,12 +231,9 @@ func (h *Hypixel) getBedwarsStats(uuid string, bedwarsType BedwarsType) (*Bedwar
 		}, nil
 	case BedwarsType3v3v3v3:
 		statsBedwars := playerStats.Player.Stats.Bedwars
-		KDUnrounded := float64(statsBedwars.FourThreeKillsBedwars) / float64(statsBedwars.FourThreeDeathsBedwars)
-		KD := float32(math.Round(KDUnrounded*100) / 100)
-		FinalKDUnrounded := float64(statsBedwars.FourThreeFinalKillsBedwars) / float64(statsBedwars.FourThreeFinalDeathsBedwars)
-		FinalKD := float32(math.Round(FinalKDUnrounded*100) / 100)
-		WLUnrounded := float64(statsBedwars.FourThreeWinsBedwars) / float64(statsBedwars.FourThreeLossesBedwars)
-		WL := float32(math.Round(WLUnrounded*100) / 100)
+		KD := float32(statsBedwars.FourThreeKillsBedwars) / float32(statsBedwars.FourThreeDeathsBedwars)
+		FinalKD := float32(statsBedwars.FourThreeFinalKillsBedwars) / float32(statsBedwars.FourThreeFinalDeathsBedwars)
+		WL := float32(statsBedwars.FourThreeWinsBedwars) / float32(statsBedwars.FourThreeLossesBedwars)
 		return &BedwarsStats{
 			playerStats.Player.Achievements.BedwarsLevel,
 			statsBedwars.FourThreeKillsBedwars,
@@ -260,12 +250,9 @@ func (h *Hypixel) getBedwarsStats(uuid string, bedwarsType BedwarsType) (*Bedwar
 		}, nil
 	case BedwarsType4v4v4v4:
 		statsBedwars := playerStats.Player.Stats.Bedwars
-		KDUnrounded := float64(statsBedwars.FourFourKillsBedwars) / float64(statsBedwars.FourFourDeathsBedwars)
-		KD := float32(math.Round(KDUnrounded*100) / 100)
-		FinalKDUnrounded := float64(statsBedwars.FourFourFinalKillsBedwars) / float64(statsBedwars.FourFourFinalDeathsBedwars)
-		FinalKD := float32(math.Round(FinalKDUnrounded*100) / 100)
-		WLUnrounded := float64(statsBedwars.FourFourWinsBedwars) / float64(statsBedwars.FourFourLossesBedwars)
-		WL := float32(math.Round(WLUnrounded*100) / 100)
+		KD := float32(statsBedwars.FourFourKillsBedwars) / float32(statsBedwars.FourFourDeathsBedwars)
+		FinalKD := float32(statsBedwars.FourFourFinalKillsBedwars) / float32(statsBedwars.FourFourFinalDeathsBedwars)
+		WL := float32(statsBedwars.FourFourWinsBedwars) / float32(statsBedwars.FourFourLossesBedwars)
 		return &BedwarsStats{
 			playerStats.Player.Achievements.BedwarsLevel,
 			statsBedwars.FourFourKillsBedwars,
@@ -282,12 +269,9 @@ func (h *Hypixel) getBedwarsStats(uuid string, bedwarsType BedwarsType) (*Bedwar
 		}, nil
 	case BedwarsType4v4:
 		statsBedwars := playerStats.Player.Stats.Bedwars
-		KDUnrounded := float64(statsBedwars.TwoFourKillsBedwars) / float64(statsBedwars.TwoFourDeathsBedwars)
-		KD := float32(math.Round(KDUnrounded*100) / 100)
-		FinalKDUnrounded := float64(statsBedwars.TwoFourFinalKillsBedwars) / float64(statsBedwars.TwoFourFinalDeathsBedwars)
-		FinalKD := float32(math.Round(FinalKDUnrounded*100) / 100)
-		WLUnrounded := float64(statsBedwars.TwoFourWinsBedwars) / float64(statsBedwars.TwoFourLossesBedwars)
-		WL := float32(math.Round(WLUnrounded*100) / 100)
+		KD := float32(statsBedwars.TwoFourKillsBedwars) / float32(statsBedwars.TwoFourDeathsBedwars)
+		FinalKD := float32(statsBedwars.TwoFourFinalKillsBedwars) / float32(statsBedwars.TwoFourFinalDeathsBedwars)
+		WL := float32(statsBedwars.TwoFourWinsBedwars) / float32(statsBedwars.TwoFourLossesBedwars)
 		return &BedwarsStats{
 			playerStats.Player.Achievements.BedwarsLevel,
 			statsBedwars.TwoFourKillsBedwars,
