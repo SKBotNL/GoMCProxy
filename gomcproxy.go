@@ -26,6 +26,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/fatih/color"
@@ -57,8 +58,7 @@ type Proxy struct {
 	serverEncrypt   cipher.Stream
 	serverReader    *cipher.StreamReader
 	serverWriter    *cipher.StreamWriter
-	shouldExit      bool
-	exited          chan struct{}
+	wg              sync.WaitGroup
 	forwardAddr     string
 	accessToken     string
 	uuid            string
@@ -135,12 +135,10 @@ func main() {
 }
 
 func handleClient(clientConn net.Conn, forwardAddr string, accessToken string, uuid string) {
-	defer clientConn.Close()
-
 	serverConn, err := net.Dial("tcp", forwardAddr)
 	if err != nil {
+		clientConn.Close()
 		log.Panic(err)
-		return
 	}
 
 	proxy := Proxy{
@@ -152,25 +150,26 @@ func handleClient(clientConn net.Conn, forwardAddr string, accessToken string, u
 		serverEncrypt:   nil,
 		serverReader:    nil,
 		serverWriter:    nil,
-		shouldExit:      false,
-		exited:          make(chan struct{}),
 		forwardAddr:     forwardAddr,
 		accessToken:     accessToken,
 		uuid:            uuid,
 		isHypixel:       false,
 		bedwarsType:     nil,
 	}
+
+	proxy.wg.Add(2)
 	go proxy.proxyTraffic(clientConn, serverConn, true)
 	go proxy.proxyTraffic(serverConn, clientConn, false)
 
-	<-proxy.exited
-	serverConn.(*net.TCPConn).CloseWrite()
+	proxy.wg.Wait()
 	serverConn.Close()
+	clientConn.Close()
 
-	log.Println("Cleared proxy state and closed the server connection")
+	log.Println("Cleared proxy state and closed all connections")
 }
 
 func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
+	defer p.wg.Done()
 	for {
 		var r io.Reader = src
 		if p.serverReader != nil && !clientToServer {
@@ -200,7 +199,6 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 			protocolVersion, _, err := readVarInt(packetReader)
 			if err != nil {
 				log.Panic(err)
-				return
 			}
 			if protocolVersion != 47 {
 				log.Panic("This proxy only supports protocol version 47 (1.8.*)")
@@ -210,21 +208,18 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 			_, err = readPrefixedBytes(packetReader)
 			if err != nil {
 				log.Panic(err)
-				return
 			}
 
 			// Server port
 			_, err = io.CopyN(io.Discard, packetReader, 2)
 			if err != nil {
 				log.Panic(err)
-				return
 			}
 
 			// Intent
 			intent, _, err := readVarInt(packetReader)
 			if err != nil {
 				log.Panic(err)
-				return
 			}
 
 			var reconstructedPacket bytes.Buffer
@@ -538,11 +533,6 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 // bool: should return
 func (p *Proxy) errorChecker(err error) bool {
 	if errors.Is(err, io.EOF) || errors.Is(err, syscall.EPIPE) {
-		if p.shouldExit {
-			p.exited <- struct{}{}
-			return true
-		}
-		p.shouldExit = true
 		return true
 	}
 	log.Panic(err)
