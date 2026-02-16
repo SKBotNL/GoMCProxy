@@ -492,7 +492,6 @@ func (p *Proxy) proxyTraffic(src net.Conn, dst net.Conn, clientToServer bool) {
 			chatMessage := ChatMessageData{}
 			err = json.Unmarshal([]byte(message), &chatMessage)
 			if err == nil {
-				fmt.Println(chatMessage.Text)
 				if strings.HasPrefix(chatMessage.Text, "{\"server\"") {
 					chatMessage := ChatMessageData{}
 					err = json.Unmarshal([]byte(message), &chatMessage)
